@@ -18,6 +18,7 @@ __version__ = '0.3'
 
 import io
 import os
+import re
 import sys
 import bz2
 import glob
@@ -36,24 +37,24 @@ parser = argparse.ArgumentParser(description='Generate a new image by applying s
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 add_arg = parser.add_argument
 add_arg('files',                nargs='*', default=[])
-add_arg('--zoom',               default=2, type=int,                help='Resolution increase factor for inference.')
+add_arg('--zoom',               default=1, type=int,                help='Resolution increase factor for inference.')
 add_arg('--rendering-tile',     default=80, type=int,               help='Size of tiles used for rendering images.')
 add_arg('--rendering-overlap',  default=24, type=int,               help='Number of pixels padding around each tile.')
 add_arg('--rendering-histogram',default=False, action='store_true', help='Match color histogram of output to input.')
-add_arg('--type',               default='photo', type=str,          help='Name of the neural network to load/save.')
+add_arg('--type',               default='video', type=str,          help='Name of the neural network to load/save.')
 add_arg('--model',              default='default', type=str,        help='Specific trained version of the model.')
 add_arg('--train',              default=False, type=str,            help='File pattern to load for training.')
 add_arg('--train-scales',       default=0, type=int,                help='Randomly resize images this many times.')
 add_arg('--train-blur',         default=None, type=int,             help='Sigma value for gaussian blur preprocess.')
 add_arg('--train-noise',        default=None, type=float,           help='Radius for preprocessing gaussian blur.')
 add_arg('--train-jpeg',         default=[], nargs='+', type=int,    help='JPEG compression level & range in preproc.')
+add_arg('--frame-expanse',      default=1, type=int,                help='how many frames need to get')
 add_arg('--epochs',             default=10, type=int,               help='Total number of iterations in training.')
 add_arg('--epoch-size',         default=72, type=int,               help='Number of batches trained in an epoch.')
-#add_arg('--epoch-size',         default=72, type=int,               help='Number of batches trained in an epoch.')
 add_arg('--save-every',         default=10, type=int,               help='Save generator after every training epoch.')
 add_arg('--batch-shape',        default=192, type=int,              help='Resolution of images in training batch.')
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
-add_arg('--buffer-size',        default=1500, type=int,             help='Total image fragments kept in cache.')
+add_arg('--buffer-size',        default=200, type=int,               help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=75, type=int,               help='How often to decay the learning rate.')
@@ -140,28 +141,73 @@ class DataLoader(threading.Thread):
         self.data_ready = threading.Event()
         self.data_copied = threading.Event()
 
+        self.image_num = args.frame_expanse*2+1
         self.orig_shape, self.seed_shape = args.batch_shape, args.batch_shape // args.zoom
 
         self.orig_buffer = np.zeros((args.buffer_size, 3, self.orig_shape, self.orig_shape), dtype=np.float32)
         self.seed_buffer = np.zeros((args.buffer_size, 3, self.seed_shape, self.seed_shape), dtype=np.float32)
         self.files = glob.glob(args.train)
+        print ("Number of files {}".format(len(self.files)))
+        #for f in self.files:
+            #print ("file name {}".format(f))
         if len(self.files) == 0:
             error("There were no files found to train from searching for `{}`".format(args.train),
                   "  - Try putting all your images in one folder and using `--train=data/*.jpg`")
 
-        self.available = set(range(args.buffer_size))
-        self.ready = set()
+        #self.available = set(range(args.buffer_size))
+        self.available = [range(args.buffer_size)]
+        self.ready = []
 
         self.cwd = os.getcwd()
         self.start()
+    def add_one(self, matched):
+        intStr = matched.group("number"); 
+        intValue = int(intStr);
+        addedValue = intValue + 1; 
+        addedValueStr = str(addedValue).zfill(len(intStr));
+        return addedValueStr;
 
+    def minus_one(self, matched):
+        intStr = matched.group("number"); 
+        intValue = int(intStr);
+        minusedValue = intValue - 1; 
+        minusedValueStr = str(minusedValue).zfill(len(intStr));
+        return minusedValueStr;
+    
+    def checkFileExist(self, fileName):
+        fileList = [fileName]
+        allFileExist = True
+        addF, minusF = fileName, fileName
+        #print ("[org] file name {}".format(fileName))
+        for distance in range(args.frame_expanse):
+            addF = re.sub(r"(?P<number>\d+)", self.add_one, addF)
+            fileList.append(addF)
+            #print ("[add] new file name {}".format(addF))
+            minusF = re.sub(r"(?P<number>\d+)", self.minus_one, minusF);
+            fileList.insert(0, minusF)
+            #print ("[minus] new file name {}".format(minusF))
+            allFileExist = allFileExist and os.path.isfile(addF) and os.path.isfile(minusF)
+            if allFileExist is False:
+                return []
+        return fileList
     def run(self):
         while True:
             random.shuffle(self.files)
             for f in self.files:
-                self.add_to_buffer(f)
+                fileList = self.checkFileExist(f)
+                #print("file Number {}".format(len(fileList)))
+                img = PIL.Image.open(f).convert('RGB')
+                if args.zoom > 1:
+                    img = img.resize((img.size[0]//args.zoom, img.size[1]//args.zoom), resample=PIL.Image.LANCZOS)
+                width, height = img.size
+                hRand = random.randint(0, height - self.seed_shape) 
+                wRand = random.randint(0, width - self.seed_shape)
+                #print ("hRange {} wRange {} h {} w {}".format(height - self.seed_shape, width - self.seed_shape, height, width))
+                
+                for fileName in fileList:
+                    self.add_to_buffer(fileName, hRand, wRand)
 
-    def add_to_buffer(self, f):
+    def add_to_buffer(self, f, h, w):
         filename = os.path.join(self.cwd, f)
         try:
             orig = PIL.Image.open(filename).convert('RGB')
@@ -189,36 +235,52 @@ class DataLoader(threading.Thread):
         orig = scipy.misc.fromimage(orig).astype(np.float32)
         seed = scipy.misc.fromimage(seed).astype(np.float32)
 
-        if args.train_noise is not None:
-            seed += scipy.random.normal(scale=args.train_noise, size=(seed.shape[0], seed.shape[1], 1))
+        #if args.train_noise is not None:
+        #    seed += scipy.random.normal(scale=args.train_noise, size=(seed.shape[0], seed.shape[1], 1))
 
-        for _ in range(seed.shape[0] * seed.shape[1] // (args.buffer_fraction * self.seed_shape ** 2)):
-            h = random.randint(0, seed.shape[0] - self.seed_shape)
-            w = random.randint(0, seed.shape[1] - self.seed_shape)
-            seed_chunk = seed[h:h+self.seed_shape, w:w+self.seed_shape]
-            h, w = h * args.zoom, w * args.zoom
-            orig_chunk = orig[h:h+self.orig_shape, w:w+self.orig_shape]
+        #i = 0;
+        #for _ in range(seed.shape[0] * seed.shape[1] // (args.buffer_fraction * self.seed_shape ** 2)):
+            #i = i + 1
+            #print ("for in add_to_buffer {}".format(i))
+        #print ("seed shape {}".format(seed.shape))
+        #print ("self.seed_shape {}".format(self.seed_shape))
+        #h = random.randint(0, seed.shape[0] - self.seed_shape)
+        #w = random.randint(0, seed.shape[1] - self.seed_shape)
+        #print ("h {} w {}".format(seed.shape[0] - self.seed_shape, seed.shape[1] - self.seed_shape))
+        #print ("h {} w {}".format(h, w))
+        seed_chunk = seed[h:h+self.seed_shape, w:w+self.seed_shape]
+        h, w = h * args.zoom, w * args.zoom
+        orig_chunk = orig[h:h+self.orig_shape, w:w+self.orig_shape]
 
-            while len(self.available) == 0:
-                self.data_copied.wait()
-                self.data_copied.clear()
+        while len(self.available) == 0:
+            self.data_copied.wait()
+            self.data_copied.clear()
 
-            i = self.available.pop()
-            self.orig_buffer[i] = np.transpose(orig_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1))
-            self.seed_buffer[i] = np.transpose(seed_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1))
-            self.ready.add(i)
+        i = self.available[0]
+        self.available.remove(i)
+        #i = self.available.pop()
+        #print ("buffer shape {}".format(self.orig_buffer[i].shape))
+        #print ("chunk shape {}".format(np.transpose(seed_chunk.astype(np.float32)).shape))
+        #print ("chunk shape {}".format(np.transpose(orig_chunk.astype(np.float32)).shape))
+        self.orig_buffer[i] = np.transpose(orig_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1))
+        self.seed_buffer[i] = np.transpose(seed_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1))
+        self.ready.append(i)
 
-            if len(self.ready) >= args.batch_size:
-                self.data_ready.set()
+        if len(self.ready) >= args.batch_size:
+            self.data_ready.set()
 
     def copy(self, origs_out, seeds_out):
         self.data_ready.wait()
         self.data_ready.clear()
+        # every startIdx need to be a multiple of self.image_num
+        startIdx = random.randint(0, (len(self.ready)-args.batch_size)/self.image_num)
+        #print ("random length {}".format(len(self.ready)-args.batch_size)/self.image_num)
+        startIdx = startIdx * self.image_num
 
-        for i, j in enumerate(random.sample(self.ready, args.batch_size)):
-            origs_out[i] = self.orig_buffer[j]
-            seeds_out[i] = self.seed_buffer[j]
-            self.available.add(j)
+        for i in range(args.batch_size):
+            origs_out[i] = self.orig_buffer[i+startIdx]
+            seeds_out[i] = self.seed_buffer[i+startIdx]
+            self.available.add(i+startIdx)
         self.data_copied.set()
 
 
