@@ -1,1 +1,1 @@
-sshpass -p "neaCMU17$" scp -r schen@10.1.13.187:/home/schen/vlr_project/dataset/dataset .
+sshpass -p "apc" scp -r harp@plaidmaster.ddns.net:/home/harp/SaveData/Leo/dataset .
