@@ -1,6 +1,8 @@
 # NeuralEnhance
 train/
 valid/
+dataset/
+dataset_cif/
 *.pkl.bz2
 
 # Byte-compiled / optimized / DLL files
