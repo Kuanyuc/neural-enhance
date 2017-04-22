@@ -125,7 +125,7 @@ if sys.platform == 'win32':
 
 # Deep Learning Framework
 import lasagne
-from lasagne.layers import Conv2DLayer as ConvLayer, Deconv2DLayer as DeconvLayer, Pool2DLayer as PoolLayer
+from lasagne.layers import Conv3DLayer as ConvLayer, Deconv2DLayer as DeconvLayer, Pool3DLayer as PoolLayer
 from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm
 
 print('{}  - Using the device `{}` for neural computation.{}\n'.format(ansi.CYAN, theano.config.device, ansi.ENDC))
@@ -278,9 +278,13 @@ class DataLoader(threading.Thread):
         startIdx = startIdx * self.image_num
 
         for i in range(args.batch_size):
-            origs_out[i] = self.orig_buffer[i+startIdx]
-            seeds_out[i] = self.seed_buffer[i+startIdx]
+            origs = np.concatenate((origs, self.orig_buffer[i+startIdx]), axis=0);
+            seeds = np.concatenate((seeds, self.seed_buffer[i+startIdx]), axis=0);
             self.available.add(i+startIdx)
+        origs = np.reshape(origs, (args.batch_size/self.image_num, self.image_num, -1, -1, -1))
+        origs_out = np.transpose(origs, (0, 2, 1, 3, 4))
+        seeds = np.reshape(origs, (args.batch_size/self.image_num, self.image_num, -1, -1, -1))
+        seeds_out = np.transpose(origs, (0, 2, 1, 3, 4))
         self.data_copied.set()
 
 
@@ -312,8 +316,8 @@ class Model(object):
 
     def __init__(self):
         self.network = collections.OrderedDict()
-        self.network['img'] = InputLayer((None, 3, None, None))
-        self.network['seed'] = InputLayer((None, 3, None, None))
+        self.network['img'] = InputLayer((None, 3, None, None, None))
+        self.network['seed'] = InputLayer((None, 3, None, None, None))
 
         config, params = self.load_model()
         self.setup_generator(self.last_layer(), config)
@@ -333,9 +337,11 @@ class Model(object):
     def last_layer(self):
         return list(self.network.values())[-1]
 
-    def make_layer(self, name, input, units, filter_size=(3,3), stride=(1,1), pad=(1,1), alpha=0.25):
+    def make_layer(self, name, input, units, filter_size=(3,3,3), stride=(1,1,1), pad=(1,1,1), alpha=0.25):
         conv = ConvLayer(input, units, filter_size, stride=stride, pad=pad, nonlinearity=None)
+        print ("conv's shape {}".format(conv.output_shape))
         prelu = lasagne.layers.ParametricRectifierLayer(conv, alpha=lasagne.init.Constant(alpha))
+        print ("prelu's shape {}".format(prelu.output_shape))
         self.network[name+'x'] = conv
         self.network[name+'>'] = prelu
         return prelu
@@ -351,10 +357,13 @@ class Model(object):
 
         units_iter = extend(args.generator_filters)
         units = next(units_iter)
-        self.make_layer('iter.0', input, units, filter_size=(7,7), pad=(3,3))
+        print ("shape {}".format(input.shape))
+        self.make_layer('iter.0', input, units, filter_size=(3,7,7), pad=(3,3,3))
 
+        print ("last layer's shape {}".format(self.last_layer().alpha.get_value().shape))
+        print ("units_iter {}".format(self.network.items()))
         for i in range(0, args.generator_downscale):
-            self.make_layer('downscale%i'%i, self.last_layer(), next(units_iter), filter_size=(4,4), stride=(2,2))
+            self.make_layer('downscale%i'%i, self.last_layer(), next(units_iter), filter_size=(3,4,4), stride=(2,2,2))
 
         units = next(units_iter)
         for i in range(0, args.generator_blocks):
@@ -364,8 +373,9 @@ class Model(object):
             u = next(units_iter)
             self.make_layer('upscale%i.2'%i, self.last_layer(), u*4)
             self.network['upscale%i.1'%i] = SubpixelReshuffleLayer(self.last_layer(), u, 2)
+            #print ("units_iter {}".format(self.network.items()))
 
-        self.network['out'] = ConvLayer(self.last_layer(), 3, filter_size=(7,7), pad=(3,3), nonlinearity=None)
+        self.network['out'] = ConvLayer(self.last_layer(), 3, filter_size=(3,7,7), pad=(3,3,3), nonlinearity=None)
 
     def setup_perceptual(self, input):
         """Use lasagne to create a network of convolution layers using pre-trained VGG19 weights.
@@ -549,8 +559,8 @@ class NeuralEnhancer(object):
 
     def train(self):
         seed_size = args.batch_shape // args.zoom
-        images = np.zeros((args.batch_size, 3, args.batch_shape, args.batch_shape), dtype=np.float32)
-        seeds = np.zeros((args.batch_size, 3, seed_size, seed_size), dtype=np.float32)
+        images = np.zeros((args.batch_size, 3, args.frame_expanse*2+1, args.batch_shape, args.batch_shape), dtype=np.float32)
+        seeds = np.zeros((args.batch_size, 3, args.frame_expanse*2+1, seed_size, seed_size), dtype=np.float32)
         learning_rate = self.decay_learning_rate()
         try:
             average, start = None, time.time()
