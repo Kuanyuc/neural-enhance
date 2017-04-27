@@ -36,6 +36,7 @@ parser = argparse.ArgumentParser(description='Generate a new image by applying s
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 add_arg = parser.add_argument
 add_arg('files',                nargs='*', default=[])
+add_arg('--loss-save-file',     default='ne_loss.txt', type=str,    help='The file for saving the loss along training')
 add_arg('--zoom',               default=2, type=int,                help='Resolution increase factor for inference.')
 add_arg('--rendering-tile',     default=80, type=int,               help='Size of tiles used for rendering images.')
 add_arg('--rendering-overlap',  default=24, type=int,               help='Number of pixels padding around each tile.')
@@ -56,7 +57,7 @@ add_arg('--batch-size',         default=15, type=int,               help='Number
 add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
-add_arg('--learning-period',    default=75, type=int,               help='How often to decay the learning rate.')
+add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
 add_arg('--learning-decay',     default=0.5, type=float,            help='How much to decay the learning rate.')
 add_arg('--generator-upscale',  default=2, type=int,                help='Steps of 2x up-sampling as post-process.')
 add_arg('--generator-downscale',default=0, type=int,                help='Steps of 2x down-sampling as preprocess.')
@@ -519,6 +520,7 @@ class NeuralEnhancer(object):
         self.thread = DataLoader() if loader else None
         self.model = Model()
         self.image_num = args.frame_expanse*2+1
+        self.loss_save_file = args.loss_save_file
 
         print('{}'.format(ansi.ENDC))
 
@@ -539,6 +541,10 @@ class NeuralEnhancer(object):
             yield l_r
             t_cur += 1
             if t_cur % args.learning_period == 0: l_r *= args.learning_decay
+
+    def save_log_history(self, this_loss):
+        with open(self.loss_save_file, 'a') as f:
+            f.write(str(this_loss) + '\n')
 
     def train(self):
         seed_size = args.batch_shape // args.zoom
@@ -563,7 +569,9 @@ class NeuralEnhancer(object):
                     assert not np.isnan(losses).any()
                     average = l if average is None else average * 0.95 + 0.05 * l
                     print("loss: {}, average: {}".format(l, average))
+                    self.save_log_history(l)
                     #print('↑' if l > average else '↓', end='', flush=True)
+                    
 
                 scald, repro = self.model.predict(seeds)
                 self.show_progress(images, scald, repro)
