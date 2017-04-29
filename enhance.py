@@ -423,7 +423,8 @@ class Model(object):
             yield (name, l)
 
     def get_filename(self, absolute=False):
-        filename = 'ne%ix-%s-%s-%s.pkl.bz2' % (args.zoom, args.type, args.model, __version__)
+        #filename = 'ne%ix-%s-%s-%s.pkl.bz2' % (args.zoom, args.type, args.model, __version__)
+        filename = 'ne4x-video-earlyfusion-0.3.pkl.bz2'
         return os.path.join(os.path.dirname(__file__), filename) if absolute else filename
 
     def save_generator(self):
@@ -515,7 +516,8 @@ class NeuralEnhancer(object):
         else:
             if len(args.files) == 0: error("Specify the image(s) to enhance on the command-line.")
             print('{}Enhancing {} image(s) specified on the command-line.{}'\
-                  .format(ansi.BLUE_B, len(args.files), ansi.BLUE))
+            #      .format(ansi.BLUE_B, len(args.files), ansi.BLUE))
+                  .format(ansi.BLUE_B, len(args.files)/3, ansi.BLUE))
 
         self.thread = DataLoader() if loader else None
         self.model = Model()
@@ -643,10 +645,43 @@ if __name__ == "__main__":
         enhancer.train()
     else:
         enhancer = NeuralEnhancer(loader=False)
+        path = os.path.join(args.files[0], "*.jpg")
+        filelist = sorted(glob.glob(path))
+        
+        for i in range(0,len(filelist)):
+            if i == 0:
+                img0 = scipy.ndimage.imread(filelist[i], mode='RGB')  
+                img1 = scipy.ndimage.imread(filelist[i], mode='RGB')
+                img2 = scipy.ndimage.imread(filelist[i+1], mode='RGB')
+            elif i+1 > len(filelist)-1:
+                img0 = scipy.ndimage.imread(filelist[i-1], mode='RGB')  
+                img1 = scipy.ndimage.imread(filelist[i], mode='RGB')
+                img2 = scipy.ndimage.imread(filelist[i], mode='RGB') 
+            else:   
+                img0 = scipy.ndimage.imread(filelist[i-1], mode='RGB')  
+                img1 = scipy.ndimage.imread(filelist[i], mode='RGB')
+                img2 = scipy.ndimage.imread(filelist[i+1], mode='RGB') 
+
+            img = np.dstack((img0,img1,img2))  
+            out = enhancer.process(img)
+            out_name = 'img_%i_ne%ix.png' % (i, args.zoom)
+            #print (os.path.join(args.files[0], out_name))
+            out.save(os.path.join(args.files[0], out_name))                                 
+        '''
+        for i in range(0,len(args.files),enhancer.image_num):
+            img0 = scipy.ndimage.imread(args.files[i], mode='RGB')  
+            img1 = scipy.ndimage.imread(args.files[i+1], mode='RGB')
+            img2 = scipy.ndimage.imread(args.files[i+2], mode='RGB')
+            img = np.dstack((img0,img1,img2))
+            out = enhancer.process(img)
+            out.save('img_'+'_ne%ix.png' % args.zoom)
+            print(flush=True)        
+        
         for filename in args.files:
             print(filename, end=' ')
             img = scipy.ndimage.imread(filename, mode='RGB')
             out = enhancer.process(img)
             out.save(os.path.splitext(filename)[0]+'_ne%ix.png' % args.zoom)
             print(flush=True)
+        '''
         print(ansi.ENDC)
