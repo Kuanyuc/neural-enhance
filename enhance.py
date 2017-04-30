@@ -158,9 +158,8 @@ class DataLoader(threading.Thread):
             error("There were no files found to train from searching for `{}`".format(args.train),
                   "  - Try putting all your images in one folder and using `--train=data/*.jpg`")
 
-        self.available = list(range(args.buffer_size))
-        #self.available = set(range(args.buffer_size))
-        self.ready = []
+        self.available = set(range(args.buffer_size))
+        self.ready = set()
 
         self.cwd = os.getcwd()
         self.start()
@@ -290,10 +289,9 @@ class DataLoader(threading.Thread):
             self.data_copied.wait()
             self.data_copied.clear()
 
-        idx = self.available[0]
-        if DEBUG_LOG_DATA_PREPARATION:
-            print ("self.available:\n", self.available)
-        self.available.remove(idx)
+        # if DEBUG_LOG_DATA_PREPARATION:
+        #     print ("self.available:\n", self.available)
+        idx = self.available.pop()
         if DEBUG_LOG_DATA_PREPARATION:
             print ("removed {idx} from self.available".format(idx = idx))
         # orig is one frame
@@ -304,9 +302,9 @@ class DataLoader(threading.Thread):
             print ("self.seed_buffer[{idx}].shape: {shape}".format(idx = idx, shape = self.seed_buffer[idx].shape))
         if DEBUG_LOG_DATA_PREPARATION:
             print ("append {idx} to self.ready".format(idx = idx))
-        self.ready.append(idx)
+        self.ready.add(idx)
 
-        if len(self.ready) == args.batch_size:
+        if len(self.ready) >= args.batch_size:
             self.data_ready.set()
 
     def copy(self, origs_out, seeds_out):
@@ -327,7 +325,7 @@ class DataLoader(threading.Thread):
             seeds_out[i] = self.seed_buffer[j].reshape(seeds_out.shape[1], seeds_out.shape[2], seeds_out.shape[3])
             if DEBUG_LOG_DATA_PREPARATION:
                 print ("batch {i} is using buffer: {j}".format(i = i, j = j))
-            self.available.append(j)
+            self.available.add(j)
             if DEBUG_LOG_DATA_PREPARATION:
                 print ("append back {j} to self.available".format(j = j))
         self.data_copied.set()
