@@ -31,8 +31,8 @@ import threading
 import collections
 import matplotlib.pyplot as plt
 
-DEBUG_VISUALISE_INPUT = False
-DEBUG_LOG_DATA_PREPARATION = False
+DEBUG_VISUALISE_INPUT = True
+DEBUG_LOG_DATA_PREPARATION = True
 
 # Configure all options first so we can later custom-load other libraries (Theano) based on device specified by user.
 parser = argparse.ArgumentParser(description='Generate a new image by applying style onto a content image.',
@@ -59,7 +59,7 @@ add_arg('--epoch-size',         default=72, type=int,               help='Number
 add_arg('--save-every',         default=10, type=int,               help='Save generator after every training epoch.')
 add_arg('--batch-shape',        default=192, type=int,              help='Resolution of images in training batch.')
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
-add_arg('--buffer-size',        default=350, type=int,             help='Total image fragments kept in cache.')
+add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
@@ -213,7 +213,7 @@ class DataLoader(threading.Thread):
                 hRand = random.randint(0, height - self.seed_shape) 
                 wRand = random.randint(0, width - self.seed_shape)
                 if DEBUG_LOG_DATA_PREPARATION:
-                    print ("f:", f)
+                    print ("In DataThread run, f:", f)
                 self.add_to_buffer(fileList, hRand, wRand)
 
     def get_orig_chunk(self, f, h, w):
@@ -311,8 +311,11 @@ class DataLoader(threading.Thread):
 
     def copy(self, origs_out, seeds_out):
         if len(self.available) != 0:
+            print ("waiting for data_ready event singal...")
             self.data_ready.wait()
+            print ("now data_ready event singal received")
             self.data_ready.clear()
+            print ("now data_ready event cleared")
 
         '''startIdx = random.randint(0, (len(self.ready)-args.batch_size*self.image_num)/self.image_num)
         startIdx = startIdx * self.image_num
@@ -682,7 +685,7 @@ class NeuralEnhancer(object):
                 if epoch >= args.discriminator_start: self.model.disc_lr.set_value(l_r)
 
                 for epoch_idx in range(args.epoch_size):
-                    print ("Iteration {epoch_idx} in epoch {epoch} finish putting data ...".format(\
+                    print ("Iteration {epoch_idx} in epoch {epoch} now putting data ...".format(\
                         epoch_idx = epoch_idx, epoch = epoch))
                     self.thread.copy(images, seeds)
                     print ("Iteration {epoch_idx} in epoch {epoch} finish putting data, start fitting ...".format(\
