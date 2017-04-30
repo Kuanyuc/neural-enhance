@@ -132,7 +132,7 @@ if sys.platform == 'win32':
 # Deep Learning Framework
 import lasagne
 from lasagne.layers import Conv2DLayer as ConvLayer, Deconv2DLayer as DeconvLayer, Pool2DLayer as PoolLayer
-from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm
+from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm, SliceLayer
 
 print('{}  - Using the device `{}` for neural computation.{}\n'.format(ansi.CYAN, theano.config.device, ansi.ENDC))
 
@@ -365,7 +365,18 @@ class Model(object):
         self.network['img'] = InputLayer((None, 3, None, None))
         self.network['seed'] = InputLayer((None, self.image_num*3, None, None))
 
+        # calculate number of levels before becoming just one input (B, 1, C, W, H)
+        self.num_fuse_levels = 0
+        temporal_num = self.image_num 
+        while (temporal_num > 1):
+            temporal_num = (temporal_num - args.fuse_size)/args.fuse_stride + 1
+            self.num_fuse_levels += 1
+
+        # Actual number of temporal domain to keep track
+        self.temporal_num = self.image_num
+        
         config, params = self.load_model()
+
         self.setup_generator(self.last_layer(), config)
 
         if args.train:
@@ -401,7 +412,49 @@ class Model(object):
 
         units_iter = extend(args.generator_filters)
         units = next(units_iter)
-        self.make_layer('iter.0', input, units, filter_size=(7,7), pad=(3,3))
+
+        # set up late fusion
+        cur_fuse_level = 0
+        while (self.temporal_num > 1):
+            this_fuse_level_name = 'fuse.%d'%cur_fuse_level
+            this_concat_level_name = 'fuse_concat.%d'%cur_fuse_level
+            next_level_temporal_num = (self.temporal_num - args.fuse_size)//args.fuse_stride + 1
+
+            if (cur_fuse_level == 0):
+                # split from the input with correct indices and create first level ConvLayers
+                for i in range(0, next_level_temporal_num):
+                    this_slice_layer = SliceLayer(input, \
+                        indices=slice(3*(args.fuse_stride * i), 3*(args.fuse_stride * i + args.fuse_size)), \
+                        axis=1)
+
+                    self.make_layer(this_fuse_level_name + '.' + str(i), \
+                        this_slice_layer, \
+                        next(units_iter), filter_size=(7,7), pad=(3,3))
+            else:
+                # do concat and then make_layer
+                last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1)
+                for i in range(0, next_level_temporal_num):
+                    layers_to_concat = []
+                    for j in range(0, args.fuse_size):
+                        last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + '>'
+                        layers_to_concat.append(self.network[last_conv_layer_name])
+
+                    # do concat layer 
+                    this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
+                    self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
+                    self.make_layer(this_fuse_level_name + '.' + str(i), \
+                        this_concat_layer, \
+                        next(units_iter), filter_size=(7,7), pad=(3,3))
+
+
+            
+            self.temporal_num = next_level_temporal_num
+            cur_fuse_level += 1
+
+        # # now, last_fuse_level_name should be the same as self.last_layer()'s name
+        # last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1) + '.' + str(0) + '>'
+
+        self.make_layer('iter.0', self.last_layer(), next(units_iter), filter_size=(7,7), pad=(3,3))
 
         for i in range(0, args.generator_downscale):
             self.make_layer('downscale%i'%i, self.last_layer(), next(units_iter), filter_size=(4,4), stride=(2,2))
