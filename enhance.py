@@ -29,13 +29,18 @@ import argparse
 import itertools
 import threading
 import collections
+import matplotlib.pyplot as plt
 
+DEBUG_VISUALISE_INPUT = False
+DEBUG_LOG_DATA_PREPARATION = False
 
 # Configure all options first so we can later custom-load other libraries (Theano) based on device specified by user.
 parser = argparse.ArgumentParser(description='Generate a new image by applying style onto a content image.',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 add_arg = parser.add_argument
 add_arg('files',                nargs='*', default=[])
+add_arg('--fuse-size',          default=2, type=int,                help='the size of fusion')
+add_arg('--fuse-stride',        default=1, type=int,                help='the stride to fuse')
 add_arg('--loss-save-file',     default='ne_loss.txt', type=str,    help='The file for saving the loss along training')
 add_arg('--zoom',               default=2, type=int,                help='Resolution increase factor for inference.')
 add_arg('--rendering-tile',     default=80, type=int,               help='Size of tiles used for rendering images.')
@@ -54,7 +59,7 @@ add_arg('--epoch-size',         default=72, type=int,               help='Number
 add_arg('--save-every',         default=10, type=int,               help='Save generator after every training epoch.')
 add_arg('--batch-shape',        default=192, type=int,              help='Resolution of images in training batch.')
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
-add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
+add_arg('--buffer-size',        default=350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
@@ -72,7 +77,7 @@ add_arg('--adversary-weight',   default=5e2, type=float,            help='Weight
 add_arg('--generator-start',    default=0, type=int,                help='Epoch count to start training generator.')
 add_arg('--discriminator-start',default=1, type=int,                help='Epoch count to update the discriminator.')
 add_arg('--adversarial-start',  default=2, type=int,                help='Epoch for generator to use discriminator.')
-add_arg('--device',             default='cpu', type=str,            help='Name of the CPU/GPU to use, for Theano.')
+add_arg('--device',             default='cuda', type=str,            help='Name of the CPU/GPU to use, for Theano.')
 args = parser.parse_args()
 
 
@@ -108,6 +113,7 @@ print("""{}   {}Super Resolution for images and videos powered by Deep Learning!
 
 # Load the underlying deep learning libraries based on the device specified.  If you specify THEANO_FLAGS manually,
 # the code assumes you know what you are doing and they are not overriden!
+print ("using device:", args.device)
 os.environ.setdefault('THEANO_FLAGS', 'floatX=float32,device={},force_device=True,allow_gc=True,'\
                                       'print_active_device=False'.format(args.device))
 
@@ -145,7 +151,7 @@ class DataLoader(threading.Thread):
         self.orig_shape, self.seed_shape = args.batch_shape, args.batch_shape // args.zoom
 
         self.orig_buffer = np.zeros((args.buffer_size, 3, self.orig_shape, self.orig_shape), dtype=np.float32)
-        self.seed_buffer = np.zeros((args.buffer_size, 3, self.seed_shape, self.seed_shape), dtype=np.float32)
+        self.seed_buffer = np.zeros((args.buffer_size, self.image_num, 3, self.seed_shape, self.seed_shape), dtype=np.float32)
         self.files = glob.glob(args.train)
         print ("Number of files {}".format(len(self.files)))
         if len(self.files) == 0:
@@ -187,24 +193,30 @@ class DataLoader(threading.Thread):
             allFileExist = allFileExist and os.path.isfile(addF) and os.path.isfile(minusF)
             if allFileExist is False:
                 return []
-        return fileList
+        return sorted(fileList) # important, so that the order is correct in fusion later
 
     def run(self):
         while True:
             random.shuffle(self.files)
             for f in self.files:
                 fileList = self.checkFileExist(f)
+                # make sure we have enough t-T/2 and t+T/2 frames using f as center
+                if (len(fileList) == 0):
+                    continue
+                # print "f:", f
                 img = PIL.Image.open(f).convert('RGB')
                 if args.zoom > 1:
                     img = img.resize((img.size[0]//args.zoom, img.size[1]//args.zoom), resample=PIL.Image.LANCZOS)
                 width, height = img.size
+                # print ("width, height:", width, height)
+                # print ("self.seed_shape:", self.seed_shape)
                 hRand = random.randint(0, height - self.seed_shape) 
                 wRand = random.randint(0, width - self.seed_shape)
-                
-                for fileName in fileList:
-                    self.add_to_buffer(fileName, hRand, wRand)
+                if DEBUG_LOG_DATA_PREPARATION:
+                    print ("f:", f)
+                self.add_to_buffer(fileList, hRand, wRand)
 
-    def add_to_buffer(self, f, h, w):
+    def get_orig_chunk(self, f, h, w):
         filename = os.path.join(self.cwd, f)
         try:
             orig = PIL.Image.open(filename).convert('RGB')
@@ -218,7 +230,30 @@ class DataLoader(threading.Thread):
                  '  - Try fixing or removing the file before next run.')
             self.files.remove(f)
             return
+        orig = scipy.misc.fromimage(orig).astype(np.float32)
 
+        h, w = h * args.zoom, w * args.zoom
+        orig_chunk = orig[h:h+self.orig_shape, w:w+self.orig_shape]
+
+        return orig_chunk, scale
+
+    def get_seed_chunk(self, f, h, w, scale):
+        """
+        scale: the scale that operated on center image, ought to be the same across this set
+        """
+        filename = os.path.join(self.cwd, f)
+        try:
+            orig = PIL.Image.open(filename).convert('RGB')
+            if scale > 1 and all(s//scale >= args.batch_shape for s in orig.size):
+                orig = orig.resize((orig.size[0]//scale, orig.size[1]//scale), resample=PIL.Image.LANCZOS)
+            if any(s < args.batch_shape for s in orig.size):
+                raise ValueError('Image is too small for training with size {}'.format(orig.size))
+        except Exception as e:
+            warn('Could not load `{}` as image.'.format(filename),
+                 '  - Try fixing or removing the file before next run.')
+            self.files.remove(f)
+            return
+        
         seed = orig
         if args.train_blur is not None:
             seed = seed.filter(PIL.ImageFilter.GaussianBlur(radius=random.randint(0, args.train_blur*2)))
@@ -229,24 +264,46 @@ class DataLoader(threading.Thread):
             seed.save(buffer, format='jpeg', quality=args.train_jpeg[0]+random.randrange(-rng, +rng))
             seed = PIL.Image.open(buffer)
 
-        orig = scipy.misc.fromimage(orig).astype(np.float32)
         seed = scipy.misc.fromimage(seed).astype(np.float32)
 
         if args.train_noise is not None:
             seed += scipy.random.normal(scale=args.train_noise, size=(seed.shape[0], seed.shape[1], 1))
 
         seed_chunk = seed[h:h+self.seed_shape, w:w+self.seed_shape]
-        h, w = h * args.zoom, w * args.zoom
-        orig_chunk = orig[h:h+self.orig_shape, w:w+self.orig_shape]
+
+        return seed_chunk
+
+
+
+    def add_to_buffer(self, fileList, h, w):
+        middle_frame_name = fileList[args.frame_expanse] # the index for the middle image
+        orig_chunk, orig_scale = self.get_orig_chunk(middle_frame_name, h, w)
+        seed_chunk_arr = []
+        for f in fileList:
+            seed_chunk = self.get_seed_chunk(f, h, w, orig_scale)
+            seed_chunk_arr.append(seed_chunk)
+
+        seed_chunk_arr = np.asarray(seed_chunk_arr).astype(np.float32)
+
 
         while len(self.available) == 0:
             self.data_copied.wait()
             self.data_copied.clear()
 
         idx = self.available[0]
+        if DEBUG_LOG_DATA_PREPARATION:
+            print ("self.available:\n", self.available)
         self.available.remove(idx)
-        self.orig_buffer[idx] = np.transpose(orig_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1))
-        self.seed_buffer[idx] = np.transpose(seed_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1))
+        if DEBUG_LOG_DATA_PREPARATION:
+            print ("removed {idx} from self.available".format(idx = idx))
+        # orig is one frame
+        self.orig_buffer[idx] = np.transpose(orig_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1)) # reshape to (C, W, H)
+        # seed is image_num of frames
+        self.seed_buffer[idx] = np.transpose(seed_chunk_arr.astype(np.float32) / 255.0 - 0.5, (0, 3, 1, 2)) # reshape to (T, C, W, H)
+        if DEBUG_LOG_DATA_PREPARATION:
+            print ("self.seed_buffer[{idx}].shape: {shape}".format(idx = idx, shape = self.seed_buffer[idx].shape))
+        if DEBUG_LOG_DATA_PREPARATION:
+            print ("append {idx} to self.ready".format(idx = idx))
         self.ready.append(idx)
 
         if len(self.ready) == args.batch_size:
@@ -266,11 +323,13 @@ class DataLoader(threading.Thread):
                                  seeds_out.shape[1], seeds_out.shape[2], seeds_out.shape[3])'''
 
         for i, j in enumerate(random.sample(self.ready, args.batch_size)):
-            j = j - (j % self.image_num)
-            origs_out[i] = self.orig_buffer[j+args.frame_expanse]
-            seeds_out[i] = self.seed_buffer[j:j+self.image_num].reshape(seeds_out.shape[1], seeds_out.shape[2], seeds_out.shape[3])
-
+            origs_out[i] = self.orig_buffer[j]
+            seeds_out[i] = self.seed_buffer[j].reshape(seeds_out.shape[1], seeds_out.shape[2], seeds_out.shape[3])
+            if DEBUG_LOG_DATA_PREPARATION:
+                print ("batch {i} is using buffer: {j}".format(i = i, j = j))
             self.available.append(j)
+            if DEBUG_LOG_DATA_PREPARATION:
+                print ("append back {j} to self.available".format(j = j))
         self.data_copied.set()
 
 
@@ -304,7 +363,7 @@ class Model(object):
         self.network = collections.OrderedDict()
         self.image_num = args.frame_expanse*2+1
         self.network['img'] = InputLayer((None, 3, None, None))
-        self.network['seed'] = InputLayer((None, 3*self.image_num, None, None))
+        self.network['seed'] = InputLayer((None, self.image_num*3, None, None))
 
         config, params = self.load_model()
         self.setup_generator(self.last_layer(), config)
@@ -481,6 +540,7 @@ self.get_filename()))
         output_layers = [self.network['out'], self.network[args.perceptual_layer], self.network['disc']]
         gen_out, percept_out, disc_out = lasagne.layers.get_output(output_layers, input_layers, deterministic=False)
 
+
         # Generator loss function, parameters and updates.
         self.gen_lr = theano.shared(np.array(0.0, dtype=theano.config.floatX))
         self.adversary_weight = theano.shared(np.array(0.0, dtype=theano.config.floatX))
@@ -501,7 +561,7 @@ self.get_filename()))
 
         # Combined Theano function for updating both generator and discriminator at the same time.
         updates = collections.OrderedDict(list(gen_updates.items()) + list(disc_updates.items()))
-        self.fit = theano.function([input_tensor, seed_tensor], gen_losses + [disc_out.mean(axis=(1,2,3))],
+        self.fit = theano.function([input_tensor, seed_tensor], gen_losses + [disc_out.mean(axis=(1,2,3))] + [disc_out],
 updates=updates)
 
 
@@ -526,6 +586,9 @@ class NeuralEnhancer(object):
 
     def imsave(self, fn, img):
         scipy.misc.toimage(np.transpose(img + 0.5, (1, 2, 0)).clip(0.0, 1.0) * 255.0, cmin=0, cmax=255).save(fn)
+
+    def convert_showable_im(self, img):
+        return scipy.misc.toimage(np.transpose(img + 0.5, (1, 2, 0)).clip(0.0, 1.0) * 255.0, cmin=0, cmax=255)
 
     def show_progress(self, orign, scald, repro):
         os.makedirs('valid', exist_ok=True)
@@ -552,6 +615,12 @@ class NeuralEnhancer(object):
         seeds = np.zeros((args.batch_size, 3*self.image_num, seed_size, seed_size), dtype=np.float32)
         learning_rate = self.decay_learning_rate()
         try:
+            fig_image = plt.figure(1)
+            fig_seed = plt.figure(2)
+            fig_seed1 = fig_seed.add_subplot(1,3,1)
+            fig_seed2 = fig_seed.add_subplot(1,3,2)
+            fig_seed3 = fig_seed.add_subplot(1,3,3)
+
             average, start = None, time.time()
             for epoch in range(args.epochs):
                 total, stats = None, None
@@ -559,9 +628,42 @@ class NeuralEnhancer(object):
                 if epoch >= args.generator_start: self.model.gen_lr.set_value(l_r)
                 if epoch >= args.discriminator_start: self.model.disc_lr.set_value(l_r)
 
-                for _ in range(args.epoch_size):
+                for epoch_idx in range(args.epoch_size):
+                    print ("Iteration {epoch_idx} in epoch {epoch} finish putting data ...".format(\
+                        epoch_idx = epoch_idx, epoch = epoch))
                     self.thread.copy(images, seeds)
+                    print ("Iteration {epoch_idx} in epoch {epoch} finish putting data, start fitting ...".format(\
+                        epoch_idx = epoch_idx, epoch = epoch))
+                    
+                    if DEBUG_VISUALISE_INPUT:
+                        # debug visualise the seeds and images
+                        for batch_id in range(0, args.batch_size):
+                            plt.figure(1)
+                            plt.imshow(self.convert_showable_im(images[batch_id]))
+                            plt.figure(2)
+                            plt.subplot(131)
+                            plt.imshow(self.convert_showable_im(seeds[batch_id, 0:3]))
+                            plt.subplot(132)
+                            plt.imshow(self.convert_showable_im(seeds[batch_id, 3:6]))
+                            plt.subplot(133)
+                            plt.imshow(self.convert_showable_im(seeds[batch_id, 6:9]))
+
+                            plt.show(block=False)
+                            duration = 0.5 # [sec]
+                            plt.pause(duration)
+                            plt.clf()
+                            plt.close()
+                            # close figure 1 as well
+                            plt.clf()
+                            plt.close()
+
+
                     output = self.model.fit(images, seeds)
+                    
+                    # this_disc_out = output[4]
+                    # print ("this_disc_out.shape:", this_disc_out.shape)
+                    # raise ValueError("purpose stop")
+
                     losses = np.array(output[:3], dtype=np.float32)
                     stats = (stats + output[3]) if stats is not None else output[3]
                     total = total + losses if total is not None else losses
