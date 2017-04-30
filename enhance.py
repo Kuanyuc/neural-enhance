@@ -59,7 +59,7 @@ add_arg('--epoch-size',         default=72, type=int,               help='Number
 add_arg('--save-every',         default=10, type=int,               help='Save generator after every training epoch.')
 add_arg('--batch-shape',        default=192, type=int,              help='Resolution of images in training batch.')
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
-add_arg('--buffer-size',        default=350, type=int,             help='Total image fragments kept in cache.')
+add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
