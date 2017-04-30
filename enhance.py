@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""                          _              _                           
-  _ __   ___ _   _ _ __ __ _| |   ___ _ __ | |__   __ _ _ __   ___ ___  
- | '_ \ / _ \ | | | '__/ _` | |  / _ \ '_ \| '_ \ / _` | '_ \ / __/ _ \ 
- | | | |  __/ |_| | | | (_| | | |  __/ | | | | | | (_| | | | | (_|  __/ 
- |_| |_|\___|\__,_|_|  \__,_|_|  \___|_| |_|_| |_|\__,_|_| |_|\___\___| 
+"""                          _              _
+  _ __   ___ _   _ _ __ __ _| |   ___ _ __ | |__   __ _ _ __   ___ ___
+ | '_ \ / _ \ | | | '__/ _` | |  / _ \ '_ \| '_ \ / _` | '_ \ / __/ _ \
+ | | | |  __/ |_| | | | (_| | | |  __/ | | | | | | (_| | | | | (_|  __/
+ |_| |_|\___|\__,_|_|  \__,_|_|  \___|_| |_|_| |_|\__,_|_| |_|\___\___|
 """
 #
 # Copyright (c) 2016, Alex J. Champandard.
@@ -59,7 +59,7 @@ add_arg('--epoch-size',         default=72, type=int,               help='Number
 add_arg('--save-every',         default=10, type=int,               help='Save generator after every training epoch.')
 add_arg('--batch-shape',        default=192, type=int,              help='Resolution of images in training batch.')
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
-add_arg('--buffer-size',        default=350, type=int,             help='Total image fragments kept in cache.')
+add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
@@ -165,19 +165,19 @@ class DataLoader(threading.Thread):
         self.cwd = os.getcwd()
         self.start()
     def add_one(self, matched):
-        intStr = matched.group("number"); 
+        intStr = matched.group("number");
         intValue = int(intStr);
-        addedValue = intValue + 1; 
+        addedValue = intValue + 1;
         addedValueStr = str(addedValue).zfill(len(intStr));
         return addedValueStr;
 
     def minus_one(self, matched):
-        intStr = matched.group("number"); 
+        intStr = matched.group("number");
         intValue = int(intStr);
-        minusedValue = intValue - 1; 
+        minusedValue = intValue - 1;
         minusedValueStr = str(minusedValue).zfill(len(intStr));
         return minusedValueStr;
-    
+
     def checkFileExist(self, fileName):
         fileList = [fileName]
         allFileExist = True
@@ -210,7 +210,7 @@ class DataLoader(threading.Thread):
                 width, height = img.size
                 # print ("width, height:", width, height)
                 # print ("self.seed_shape:", self.seed_shape)
-                hRand = random.randint(0, height - self.seed_shape) 
+                hRand = random.randint(0, height - self.seed_shape)
                 wRand = random.randint(0, width - self.seed_shape)
                 if DEBUG_LOG_DATA_PREPARATION:
                     print ("f:", f)
@@ -253,7 +253,7 @@ class DataLoader(threading.Thread):
                  '  - Try fixing or removing the file before next run.')
             self.files.remove(f)
             return
-        
+
         seed = orig
         if args.train_blur is not None:
             seed = seed.filter(PIL.ImageFilter.GaussianBlur(radius=random.randint(0, args.train_blur*2)))
@@ -367,14 +367,14 @@ class Model(object):
 
         # calculate number of levels before becoming just one input (B, 1, C, W, H)
         self.num_fuse_levels = 0
-        temporal_num = self.image_num 
+        temporal_num = self.image_num
         while (temporal_num > 1):
             temporal_num = (temporal_num - args.fuse_size)/args.fuse_stride + 1
             self.num_fuse_levels += 1
 
         # Actual number of temporal domain to keep track
         self.temporal_num = self.image_num
-        
+
         config, params = self.load_model()
 
         self.setup_generator(self.last_layer(), config)
@@ -439,7 +439,7 @@ class Model(object):
                         last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + '>'
                         layers_to_concat.append(self.network[last_conv_layer_name])
 
-                    # do concat layer 
+                    # do concat layer
                     this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
                     self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
                     self.make_layer(this_fuse_level_name + '.' + str(i), \
@@ -447,7 +447,7 @@ class Model(object):
                         next(units_iter), filter_size=(7,7), pad=(3,3))
 
 
-            
+
             self.temporal_num = next_level_temporal_num
             cur_fuse_level += 1
 
@@ -543,7 +543,7 @@ class Model(object):
         params = {k: [cast(p) for p in l.get_params()] for (k, l) in self.list_generator_layers()}
         config = {k: getattr(args, k) for k in ['generator_blocks', 'generator_residual', 'generator_filters'] + \
                                                ['generator_upscale', 'generator_downscale']}
-        
+
         pickle.dump((config, params), bz2.open(self.get_filename(absolute=True), 'wb'))
         print('  - Saved model as `{}` after training.'.format(self.get_filename()))
 
@@ -687,7 +687,7 @@ class NeuralEnhancer(object):
                     self.thread.copy(images, seeds)
                     print ("Iteration {epoch_idx} in epoch {epoch} finish putting data, start fitting ...".format(\
                         epoch_idx = epoch_idx, epoch = epoch))
-                    
+
                     if DEBUG_VISUALISE_INPUT:
                         # debug visualise the seeds and images
                         for batch_id in range(0, args.batch_size):
@@ -712,7 +712,7 @@ class NeuralEnhancer(object):
 
 
                     output = self.model.fit(images, seeds)
-                    
+
                     # this_disc_out = output[4]
                     # print ("this_disc_out.shape:", this_disc_out.shape)
                     # raise ValueError("purpose stop")
@@ -726,7 +726,7 @@ class NeuralEnhancer(object):
                     print("loss: {}, average: {}".format(l, average))
                     self.save_log_history(l)
                     #print('↑' if l > average else '↓', end='', flush=True)
-                    
+
 
                 scald, repro = self.model.predict(seeds)
                 self.show_progress(images, scald, repro)
