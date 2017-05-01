@@ -455,6 +455,8 @@ class Model(object):
         # # now, last_fuse_level_name should be the same as self.last_layer()'s name
         # last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1) + '.' + str(0) + '>'
 
+        # print ("Upon set up fuse layers:", list(self.network.keys()))
+
         self.make_layer('iter.0', self.last_layer(), next(units_iter), filter_size=(7,7), pad=(3,3))
 
         for i in range(0, args.generator_downscale):
@@ -615,7 +617,7 @@ self.get_filename()))
 
         # Combined Theano function for updating both generator and discriminator at the same time.
         updates = collections.OrderedDict(list(gen_updates.items()) + list(disc_updates.items()))
-        self.fit = theano.function([input_tensor, seed_tensor], gen_losses + [disc_out.mean(axis=(1,2,3))] + [disc_out],
+        self.fit = theano.function([input_tensor, seed_tensor], gen_losses + [disc_out.mean(axis=(1,2,3))] + [disc_out] + disc_losses,
 updates=updates)
 
 
@@ -669,11 +671,12 @@ class NeuralEnhancer(object):
         seeds = np.zeros((args.batch_size, 3*self.image_num, seed_size, seed_size), dtype=np.float32)
         learning_rate = self.decay_learning_rate()
         try:
-            fig_image = plt.figure(1)
-            fig_seed = plt.figure(2)
-            fig_seed1 = fig_seed.add_subplot(1,3,1)
-            fig_seed2 = fig_seed.add_subplot(1,3,2)
-            fig_seed3 = fig_seed.add_subplot(1,3,3)
+            if DEBUG_VISUALISE_INPUT:
+                fig_image = plt.figure(1)
+                fig_seed = plt.figure(2)
+                fig_seed1 = fig_seed.add_subplot(1,3,1)
+                fig_seed2 = fig_seed.add_subplot(1,3,2)
+                fig_seed3 = fig_seed.add_subplot(1,3,3)
 
             average, start = None, time.time()
             for epoch in range(args.epochs):
@@ -724,7 +727,9 @@ class NeuralEnhancer(object):
                     l = np.sum(losses)
                     assert not np.isnan(losses).any()
                     average = l if average is None else average * 0.95 + 0.05 * l
-                    print("loss: {}, average: {}".format(l, average))
+                    print ("prcpt loss: {}, smthn loss: {}, advrs loss: {}".format(\
+                        losses[0], losses[1], losses[2]))
+                    print("sum loss: {}, average: {}".format(l, average))
                     self.save_log_history(l)
                     #print('↑' if l > average else '↓', end='', flush=True)
                     
