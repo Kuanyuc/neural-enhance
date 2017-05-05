@@ -61,7 +61,7 @@ add_arg('--batch-shape',        default=192, type=int,              help='Resolu
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
 add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
-add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
+add_arg('--learning-rate',      default=5E-5, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
 add_arg('--learning-decay',     default=0.5, type=float,            help='How much to decay the learning rate.')
 add_arg('--generator-upscale',  default=2, type=int,                help='Steps of 2x up-sampling as post-process.')
@@ -613,11 +613,6 @@ class NeuralEnhancer(object):
         seeds = np.zeros((args.batch_size, 3*self.image_num, seed_size, seed_size), dtype=np.float32)
         learning_rate = self.decay_learning_rate()
         try:
-            fig_image = plt.figure(1)
-            fig_seed = plt.figure(2)
-            fig_seed1 = fig_seed.add_subplot(1,3,1)
-            fig_seed2 = fig_seed.add_subplot(1,3,2)
-            fig_seed3 = fig_seed.add_subplot(1,3,3)
 
             average, start = None, time.time()
             for epoch in range(args.epochs):
