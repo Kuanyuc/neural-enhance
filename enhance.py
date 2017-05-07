@@ -364,6 +364,10 @@ class Model(object):
         self.network['seed'] = InputLayer((None, self.image_num*3, None, None))
 
         config, params = self.load_model()
+
+        # Actual number of temporal domain to keep track
+        self.temporal_num = self.image_num
+        
         self.setup_generator(self.last_layer(), config)
 
         if args.train:
@@ -399,6 +403,60 @@ class Model(object):
 
         units_iter = extend(args.generator_filters)
         units = next(units_iter)
+
+        # # set up late fusion
+        # cur_fuse_level = 0
+        # while (self.temporal_num > 1):
+        #     this_fuse_level_name = 'fuse.%d'%cur_fuse_level
+        #     this_concat_level_name = 'fuse_concat.%d'%cur_fuse_level
+        #     next_level_temporal_num = (self.temporal_num - args.fuse_size)//args.fuse_stride + 1
+
+        #     W = lasagne.init.GlorotUniform()
+        #     b = lasagne.init.Constant(0.0)
+
+        #     if (cur_fuse_level == 0):
+        #         # split from the input with correct indices and create first level ConvLayers
+        #         for i in range(0, next_level_temporal_num):
+        #             this_slice_layer = SliceLayer(input, \
+        #                 indices=slice(3*(args.fuse_stride * i), 3*(args.fuse_stride * i + args.fuse_size)), \
+        #                 axis=1)
+
+        #             # params owner has id 0
+        #             if (i == 0):
+        #                 _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+        #                     this_slice_layer, \
+        #                     next(units_iter), filter_size=(7,7), pad=(3,3))
+        #             else:
+        #                 self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+        #                     this_slice_layer, \
+        #                     next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+        #     else:
+        #         # do concat and then make_layer
+        #         last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1)
+        #         for i in range(0, next_level_temporal_num):
+        #             layers_to_concat = []
+        #             for j in range(0, args.fuse_size):
+        #                 last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + '>'
+        #                 layers_to_concat.append(self.network[last_conv_layer_name])
+
+        #             # do concat layer 
+        #             this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
+        #             self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
+
+        #             # param owner has id 0
+        #             if (i == 0):
+        #                 _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+        #                     this_concat_layer, \
+        #                     next(units_iter), filter_size=(7,7), pad=(3,3))
+        #             else:
+        #                 self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+        #                     this_concat_layer, \
+        #                     next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+
+
+        #     self.temporal_num = next_level_temporal_num
+        #     cur_fuse_level += 1
+
         self.make_layer('iter.0', input, units, filter_size=(7,7), pad=(3,3))
 
         for i in range(0, args.generator_downscale):
