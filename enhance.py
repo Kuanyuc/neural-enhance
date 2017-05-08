@@ -385,6 +385,11 @@ class Model(object):
     def last_layer(self):
         return list(self.network.values())[-1]
 
+    def make_conv_layer(self, name, input, units, filter_size=(3,3), stride=(1,1), pad=(1,1)):
+        conv = ConvLayer(input, units, filter_size, stride=stride, pad=pad, nonlinearity=None)
+        self.network[name+'x'] = conv
+        return conv
+
     def make_layer(self, name, input, units, filter_size=(3,3), stride=(1,1), pad=(1,1), alpha=0.25):
         conv = ConvLayer(input, units, filter_size, stride=stride, pad=pad, nonlinearity=None)
         prelu = lasagne.layers.ParametricRectifierLayer(conv, alpha=lasagne.init.Constant(alpha))
@@ -415,9 +420,15 @@ class Model(object):
         # set up late fusion
         cur_fuse_level = 0
         while (self.temporal_num > 1):
+            print ("self.temporal_num: ", self.temporal_num)
+            print ("cur_fuse_level: ", cur_fuse_level)
             this_fuse_level_name = 'fuse.%d'%cur_fuse_level
             this_concat_level_name = 'fuse_concat.%d'%cur_fuse_level
             next_level_temporal_num = (self.temporal_num - args.fuse_size)//args.fuse_stride + 1
+
+            print ("this_fuse_level_name: ", this_fuse_level_name)
+            print ("this_concat_level_name: ", this_concat_level_name)
+            print ("next_level_temporal_num: ", next_level_temporal_num)
 
             W = lasagne.init.GlorotUniform()
             b = lasagne.init.Constant(0.0)
@@ -428,6 +439,7 @@ class Model(object):
                     this_slice_layer = SliceLayer(input, \
                         indices=slice(3*(args.fuse_stride * i), 3*(args.fuse_stride * i + args.fuse_size)), \
                         axis=1)
+                    print ("slice_layer:", 3*(args.fuse_stride * i), " to ", 3*(args.fuse_stride * i + args.fuse_size))
 
                     # params owner has id 0
                     if (i == 0):
@@ -438,6 +450,9 @@ class Model(object):
                         self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
                             this_slice_layer, \
                             next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+                    # self.make_layer(this_fuse_level_name + '.' + str(i), \
+                    #     this_slice_layer, \
+                    #     next(units_iter), filter_size=(7,7), pad=(3,3))
             else:
                 # do concat and then make_layer
                 last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1)
@@ -448,6 +463,7 @@ class Model(object):
                         layers_to_concat.append(self.network[last_conv_layer_name])
 
                     # do concat layer 
+                    print ("layers to concat: ", layers_to_concat)
                     this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
                     self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
 
@@ -460,6 +476,9 @@ class Model(object):
                         self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
                             this_concat_layer, \
                             next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+                    # self.make_layer(this_fuse_level_name + '.' + str(i), \
+                    #     this_concat_layer, \
+                    #     next(units_iter), filter_size=(7,7), pad=(3,3))
 
 
             self.temporal_num = next_level_temporal_num
