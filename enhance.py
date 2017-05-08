@@ -132,7 +132,7 @@ if sys.platform == 'win32':
 # Deep Learning Framework
 import lasagne
 from lasagne.layers import Conv2DLayer as ConvLayer, Deconv2DLayer as DeconvLayer, Pool2DLayer as PoolLayer
-from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm
+from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm, SliceLayer
 
 print('{}  - Using the device `{}` for neural computation.{}\n'.format(ansi.CYAN, theano.config.device, ansi.ENDC))
 
@@ -392,6 +392,14 @@ class Model(object):
         self.network[name+'>'] = prelu
         return prelu
 
+    def make_layer_return_params(self, name, input, units, filter_size=(3,3), stride=(1,1), pad=(1,1), \
+        alpha=0.25, given_w =lasagne.init.GlorotUniform(), given_b = lasagne.init.Constant(0.0)):
+        conv = ConvLayer(input, units, filter_size, W = given_w, b = given_b, stride=stride, pad=pad, nonlinearity=None)
+        prelu = lasagne.layers.ParametricRectifierLayer(conv, alpha=lasagne.init.Constant(alpha))
+        self.network[name+'x'] = conv
+        self.network[name+'>'] = prelu
+        return prelu, conv.W, conv.b
+    
     def make_block(self, name, input, units):
         self.make_layer(name+'-A', input, units, alpha=0.1)
         # self.make_layer(name+'-B', self.last_layer(), units, alpha=1.0)
@@ -404,58 +412,58 @@ class Model(object):
         units_iter = extend(args.generator_filters)
         units = next(units_iter)
 
-        # # set up late fusion
-        # cur_fuse_level = 0
-        # while (self.temporal_num > 1):
-        #     this_fuse_level_name = 'fuse.%d'%cur_fuse_level
-        #     this_concat_level_name = 'fuse_concat.%d'%cur_fuse_level
-        #     next_level_temporal_num = (self.temporal_num - args.fuse_size)//args.fuse_stride + 1
+        # set up late fusion
+        cur_fuse_level = 0
+        while (self.temporal_num > 1):
+            this_fuse_level_name = 'fuse.%d'%cur_fuse_level
+            this_concat_level_name = 'fuse_concat.%d'%cur_fuse_level
+            next_level_temporal_num = (self.temporal_num - args.fuse_size)//args.fuse_stride + 1
 
-        #     W = lasagne.init.GlorotUniform()
-        #     b = lasagne.init.Constant(0.0)
+            W = lasagne.init.GlorotUniform()
+            b = lasagne.init.Constant(0.0)
 
-        #     if (cur_fuse_level == 0):
-        #         # split from the input with correct indices and create first level ConvLayers
-        #         for i in range(0, next_level_temporal_num):
-        #             this_slice_layer = SliceLayer(input, \
-        #                 indices=slice(3*(args.fuse_stride * i), 3*(args.fuse_stride * i + args.fuse_size)), \
-        #                 axis=1)
+            if (cur_fuse_level == 0):
+                # split from the input with correct indices and create first level ConvLayers
+                for i in range(0, next_level_temporal_num):
+                    this_slice_layer = SliceLayer(input, \
+                        indices=slice(3*(args.fuse_stride * i), 3*(args.fuse_stride * i + args.fuse_size)), \
+                        axis=1)
 
-        #             # params owner has id 0
-        #             if (i == 0):
-        #                 _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-        #                     this_slice_layer, \
-        #                     next(units_iter), filter_size=(7,7), pad=(3,3))
-        #             else:
-        #                 self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-        #                     this_slice_layer, \
-        #                     next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
-        #     else:
-        #         # do concat and then make_layer
-        #         last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1)
-        #         for i in range(0, next_level_temporal_num):
-        #             layers_to_concat = []
-        #             for j in range(0, args.fuse_size):
-        #                 last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + '>'
-        #                 layers_to_concat.append(self.network[last_conv_layer_name])
+                    # params owner has id 0
+                    if (i == 0):
+                        _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                            this_slice_layer, \
+                            next(units_iter), filter_size=(7,7), pad=(3,3))
+                    else:
+                        self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                            this_slice_layer, \
+                            next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+            else:
+                # do concat and then make_layer
+                last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1)
+                for i in range(0, next_level_temporal_num):
+                    layers_to_concat = []
+                    for j in range(0, args.fuse_size):
+                        last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + '>'
+                        layers_to_concat.append(self.network[last_conv_layer_name])
 
-        #             # do concat layer 
-        #             this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
-        #             self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
+                    # do concat layer 
+                    this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
+                    self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
 
-        #             # param owner has id 0
-        #             if (i == 0):
-        #                 _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-        #                     this_concat_layer, \
-        #                     next(units_iter), filter_size=(7,7), pad=(3,3))
-        #             else:
-        #                 self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-        #                     this_concat_layer, \
-        #                     next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+                    # param owner has id 0
+                    if (i == 0):
+                        _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                            this_concat_layer, \
+                            next(units_iter), filter_size=(7,7), pad=(3,3))
+                    else:
+                        self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                            this_concat_layer, \
+                            next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
 
 
-        #     self.temporal_num = next_level_temporal_num
-        #     cur_fuse_level += 1
+            self.temporal_num = next_level_temporal_num
+            cur_fuse_level += 1
 
         self.make_layer('iter.0', input, units, filter_size=(7,7), pad=(3,3))
 
