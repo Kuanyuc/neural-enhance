@@ -441,44 +441,45 @@ class Model(object):
                         axis=1)
                     print ("slice_layer:", 3*(args.fuse_stride * i), " to ", 3*(args.fuse_stride * i + args.fuse_size))
 
-                    # params owner has id 0
-                    if (i == 0):
-                        _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-                            this_slice_layer, \
-                            next(units_iter), filter_size=(7,7), pad=(3,3))
-                    else:
-                        self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-                            this_slice_layer, \
-                            next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
-                    # self.make_layer(this_fuse_level_name + '.' + str(i), \
-                    #     this_slice_layer, \
-                    #     next(units_iter), filter_size=(7,7), pad=(3,3))
+                    # # params owner has id 0
+                    # if (i == 0):
+                    #     _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                    #         this_slice_layer, \
+                    #         next(units_iter), filter_size=(7,7), pad=(3,3))
+                    # else:
+                    #     self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                    #         this_slice_layer, \
+                    #         next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+                    self.make_conv_layer(this_fuse_level_name + '.' + str(i), \
+                        this_slice_layer, \
+                        next(units_iter), filter_size=(7,7), pad=(3,3))
             else:
                 # do concat and then make_layer
                 last_fuse_level_name = 'fuse.%d'%(cur_fuse_level-1)
                 for i in range(0, next_level_temporal_num):
                     layers_to_concat = []
                     for j in range(0, args.fuse_size):
-                        last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + '>'
+                        last_conv_layer_name = last_fuse_level_name + '.' + str(i * args.fuse_stride + j) + 'x'
                         layers_to_concat.append(self.network[last_conv_layer_name])
+                        print ("layer {} to concat: {}".format(j, last_conv_layer_name))
 
                     # do concat layer 
                     print ("layers to concat: ", layers_to_concat)
                     this_concat_layer = ConcatLayer(layers_to_concat, axis=1)
                     self.network[this_concat_level_name + '.' + str(i)] = this_concat_layer
 
-                    # param owner has id 0
-                    if (i == 0):
-                        _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-                            this_concat_layer, \
-                            next(units_iter), filter_size=(7,7), pad=(3,3))
-                    else:
-                        self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
-                            this_concat_layer, \
-                            next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
-                    # self.make_layer(this_fuse_level_name + '.' + str(i), \
-                    #     this_concat_layer, \
-                    #     next(units_iter), filter_size=(7,7), pad=(3,3))
+                    # # param owner has id 0
+                    # if (i == 0):
+                    #     _, W, b = self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                    #         this_concat_layer, \
+                    #         next(units_iter), filter_size=(7,7), pad=(3,3))
+                    # else:
+                    #     self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
+                    #         this_concat_layer, \
+                    #         next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
+                    self.make_conv_layer(this_fuse_level_name + '.' + str(i), \
+                        this_concat_layer, \
+                        next(units_iter), filter_size=(7,7), pad=(3,3))
 
 
             self.temporal_num = next_level_temporal_num
