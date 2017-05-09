@@ -450,7 +450,7 @@ class Model(object):
                     #     self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
                     #         this_slice_layer, \
                     #         next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
-                    self.make_conv_layer(this_fuse_level_name + '.' + str(i), \
+                    self.make_layer(this_fuse_level_name + '.' + str(i), \
                         this_slice_layer, \
                         next(units_iter), filter_size=(7,7), pad=(3,3))
             else:
@@ -477,7 +477,7 @@ class Model(object):
                     #     self.make_layer_return_params(this_fuse_level_name + '.' + str(i), \
                     #         this_concat_layer, \
                     #         next(units_iter), filter_size=(7,7), pad=(3,3), given_w = W, given_b = b)
-                    self.make_conv_layer(this_fuse_level_name + '.' + str(i), \
+                    self.make_layer(this_fuse_level_name + '.' + str(i), \
                         this_concat_layer, \
                         next(units_iter), filter_size=(7,7), pad=(3,3))
 
