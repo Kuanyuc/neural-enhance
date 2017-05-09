@@ -669,9 +669,7 @@ class NeuralEnhancer(object):
                             plt.clf()
                             plt.close()
 
-                    print ("seed shape {}".format(seeds.shape))
                     output = self.model.fit(images, seeds)
-                    print ("!!!!!!") 
                     # this_disc_out = output[4]
                     # print ("this_disc_out.shape:", this_disc_out.shape)
                     # raise ValueError("purpose stop")
