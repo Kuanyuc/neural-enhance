@@ -132,7 +132,7 @@ if sys.platform == 'win32':
 # Deep Learning Framework
 import lasagne
 from lasagne.layers import Conv2DLayer as ConvLayer, Deconv2DLayer as DeconvLayer, Pool2DLayer as PoolLayer
-from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm
+from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm, Conv3DLayer
 
 print('{}  - Using the device `{}` for neural computation.{}\n'.format(ansi.CYAN, theano.config.device, ansi.ENDC))
 
@@ -322,7 +322,7 @@ class DataLoader(threading.Thread):
 
         for i, j in enumerate(random.sample(self.ready, args.batch_size)):
             origs_out[i] = self.orig_buffer[j]
-            seeds_out[i] = self.seed_buffer[j].reshape(seeds_out.shape[1], seeds_out.shape[2], seeds_out.shape[3])
+            seeds_out[i] = self.seed_buffer[j].reshape(seeds_out.shape[1], seeds_out.shape[2], seeds_out.shape[3], seeds_out.shape[4])
             if DEBUG_LOG_DATA_PREPARATION:
                 print ("batch {i} is using buffer: {j}".format(i = i, j = j))
             self.available.add(j)
@@ -343,15 +343,16 @@ class SubpixelReshuffleLayer(lasagne.layers.Layer):
         super(SubpixelReshuffleLayer, self).__init__(incoming, **kwargs)
         self.upscale = upscale
         self.channels = channels
+        #print ("upscale {} channels {}".format(self.upscale, self.channels))
 
     def get_output_shape_for(self, input_shape):
         def up(d): return self.upscale * d if d else d
-        return (input_shape[0], self.channels, up(input_shape[2]), up(input_shape[3]))
+        return (input_shape[0], self.channels, input_shape[2], up(input_shape[3]), up(input_shape[4]))
 
     def get_output_for(self, input, deterministic=False, **kwargs):
         out, r = T.zeros(self.get_output_shape_for(input.shape)), self.upscale
         for y, x in itertools.product(range(r), repeat=2):
-            out=T.inc_subtensor(out[:,:,y::r,x::r], input[:,r*y+x::r*r,:,:])
+            out=T.inc_subtensor(out[:,:,:,y::r,x::r], input[:,r*y+x::r*r,:,:,:])
         return out
 
 
@@ -361,7 +362,7 @@ class Model(object):
         self.network = collections.OrderedDict()
         self.image_num = args.frame_expanse*2+1
         self.network['img'] = InputLayer((None, 3, None, None))
-        self.network['seed'] = InputLayer((None, self.image_num*3, None, None))
+        self.network['seed'] = InputLayer((None, 3, self.image_num, None, None))
 
         config, params = self.load_model()
         self.setup_generator(self.last_layer(), config)
@@ -388,8 +389,15 @@ class Model(object):
         self.network[name+'>'] = prelu
         return prelu
 
+    def make_3Dlayer(self, name, input, units, filter_size=(3,3,3), stride=(1,1,1), pad=(1,1,1), alpha=0.25):
+        conv = Conv3DLayer(input, units, filter_size, stride=stride, pad=pad, nonlinearity=None)
+        prelu = lasagne.layers.ParametricRectifierLayer(conv, alpha=lasagne.init.Constant(alpha))
+        self.network[name+'x'] = conv
+        self.network[name+'>'] = prelu
+        return prelu
+
     def make_block(self, name, input, units):
-        self.make_layer(name+'-A', input, units, alpha=0.1)
+        self.make_3Dlayer(name+'-A', input, units, alpha=0.1)
         # self.make_layer(name+'-B', self.last_layer(), units, alpha=1.0)
         return ElemwiseSumLayer([input, self.last_layer()]) if args.generator_residual else self.last_layer()
 
@@ -398,21 +406,26 @@ class Model(object):
         args.zoom = 2**(args.generator_upscale - args.generator_downscale)
 
         units_iter = extend(args.generator_filters)
+        #print ("generator_filters {}".format(args.generator_filters))
         units = next(units_iter)
-        self.make_layer('iter.0', input, units, filter_size=(7,7), pad=(3,3))
+        self.make_3Dlayer('iter.0', input, units, filter_size=(3,7,7), pad=(0,3,3))
 
         for i in range(0, args.generator_downscale):
-            self.make_layer('downscale%i'%i, self.last_layer(), next(units_iter), filter_size=(4,4), stride=(2,2))
+            self.make_3Dlayer('downscale%i'%i, self.last_layer(), next(units_iter), filter_size=(3,4,4), stride=(1,2,2))
 
         units = next(units_iter)
         for i in range(0, args.generator_blocks):
+            #print ("iter.{}".format(i+1))
             self.make_block('iter.%i'%(i+1), self.last_layer(), units)
 
         for i in range(0, args.generator_upscale):
             u = next(units_iter)
-            self.make_layer('upscale%i.2'%i, self.last_layer(), u*4)
+            #print ("upscaling.{}".format(i))
+            self.make_3Dlayer('upscale%i.2'%i, self.last_layer(), u*4)
             self.network['upscale%i.1'%i] = SubpixelReshuffleLayer(self.last_layer(), u, 2)
-
+        
+        self.network['reshape'] = lasagne.layers.ReshapeLayer(self.last_layer(), (([0], -1, [3], [4])))
+        #print ("shape {}".format(lasagne.layers.get_output_shape(self.last_layer())))
         self.network['out'] = ConvLayer(self.last_layer(), 3, filter_size=(7,7), pad=(3,3), nonlinearity=None)
 
     def setup_perceptual(self, input):
@@ -528,11 +541,12 @@ self.get_filename()))
 
     def compile(self):
         # Helper function for rendering test images during training, or standalone inference mode.
-        input_tensor, seed_tensor = T.tensor4(), T.tensor4()
+        input_tensor, seed_tensor = T.tensor4(), T.tensor5()
         input_layers = {self.network['img']: input_tensor, self.network['seed']: seed_tensor}
+        #input_layers = {self.network['seed']: seed_tensor}
         output = lasagne.layers.get_output([self.network[k] for k in ['seed','out']], input_layers, deterministic=True)
         self.predict = theano.function([seed_tensor], output)
-
+        print ("after prediction")
         if not args.train: return
 
         output_layers = [self.network['out'], self.network[args.perceptual_layer], self.network['disc']]
@@ -610,14 +624,14 @@ class NeuralEnhancer(object):
     def train(self):
         seed_size = args.batch_shape // args.zoom
         images = np.zeros((args.batch_size, 3, args.batch_shape, args.batch_shape), dtype=np.float32)
-        seeds = np.zeros((args.batch_size, 3*self.image_num, seed_size, seed_size), dtype=np.float32)
+        seeds = np.zeros((args.batch_size, 3, self.image_num, seed_size, seed_size), dtype=np.float32)
         learning_rate = self.decay_learning_rate()
         try:
-            fig_image = plt.figure(1)
-            fig_seed = plt.figure(2)
-            fig_seed1 = fig_seed.add_subplot(1,3,1)
-            fig_seed2 = fig_seed.add_subplot(1,3,2)
-            fig_seed3 = fig_seed.add_subplot(1,3,3)
+            #fig_image = plt.figure(1)
+            #fig_seed = plt.figure(2)
+            #fig_seed1 = fig_seed.add_subplot(1,3,1)
+            #fig_seed2 = fig_seed.add_subplot(1,3,2)
+            #fig_seed3 = fig_seed.add_subplot(1,3,3)
 
             average, start = None, time.time()
             for epoch in range(args.epochs):
@@ -655,9 +669,9 @@ class NeuralEnhancer(object):
                             plt.clf()
                             plt.close()
 
-
+                    print ("seed shape {}".format(seeds.shape))
                     output = self.model.fit(images, seeds)
-                    
+                    print ("!!!!!!") 
                     # this_disc_out = output[4]
                     # print ("this_disc_out.shape:", this_disc_out.shape)
                     # raise ValueError("purpose stop")
