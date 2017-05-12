@@ -61,6 +61,8 @@ add_arg('--batch-shape',        default=192, type=int,              help='Resolu
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
 add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
+add_arg('--learning-rate-generator',          default=1E-3, type=float,           help='Parameter for the ADAM optimizer, generator.')
+add_arg('--learning-rate-discriminator',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer, discriminator.')
 add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
 add_arg('--learning-decay',     default=0.5, type=float,            help='How much to decay the learning rate.')
@@ -135,6 +137,13 @@ from lasagne.layers import Conv2DLayer as ConvLayer, Deconv2DLayer as DeconvLaye
 from lasagne.layers import InputLayer, ConcatLayer, ElemwiseSumLayer, batch_norm, Conv3DLayer
 
 print('{}  - Using the device `{}` for neural computation.{}\n'.format(ansi.CYAN, theano.config.device, ansi.ENDC))
+
+
+def sigmoid(x,shift,mult):
+    """
+    Using this sigmoid to discourage one network overpowering the other
+    """
+    return 1.0 / (1.0 + math.exp(-(x+shift)*mult))
 
 
 #======================================================================================================================
@@ -609,8 +618,16 @@ class NeuralEnhancer(object):
             self.imsave('valid/%s_%03i_reprod.png' % (args.model, i), repro[i])
             #self.imsave('valid/%s_%03i_pixels.png' % (args.model, i), scald[i])
 
-    def decay_learning_rate(self):
-        l_r, t_cur = args.learning_rate, 0
+    def decay_generator_learning_rate(self):
+        l_r, t_cur = args.learning_rate_generator, 0
+
+        while True:
+            yield l_r
+            t_cur += 1
+            if t_cur % args.learning_period == 0: l_r *= args.learning_decay
+
+    def decay_discriminator_learning_rate(self):
+        l_r, t_cur = args.learning_rate_discriminator, 0
 
         while True:
             yield l_r
@@ -625,7 +642,8 @@ class NeuralEnhancer(object):
         seed_size = args.batch_shape // args.zoom
         images = np.zeros((args.batch_size, 3, args.batch_shape, args.batch_shape), dtype=np.float32)
         seeds = np.zeros((args.batch_size, 3, self.image_num, seed_size, seed_size), dtype=np.float32)
-        learning_rate = self.decay_learning_rate()
+        learning_rate_generator = self.decay_generator_learning_rate()
+        learning_rate_discriminator = self.decay_discriminator_learning_rate()
         try:
             #fig_image = plt.figure(1)
             #fig_seed = plt.figure(2)
@@ -636,11 +654,13 @@ class NeuralEnhancer(object):
             average, start = None, time.time()
             for epoch in range(args.epochs):
                 total, stats = None, None
-                l_r = next(learning_rate)
-                if epoch >= args.generator_start: self.model.gen_lr.set_value(l_r)
-                if epoch >= args.discriminator_start: self.model.disc_lr.set_value(l_r)
+                l_r_generator = next(learning_rate_generator)
+                l_r_discriminator = next(learning_rate_discriminator)
+                if epoch >= args.generator_start: self.model.gen_lr.set_value(l_r_generator)
+                if epoch >= args.discriminator_start: self.model.disc_lr.set_value(l_r_discriminator)
 
                 for epoch_idx in range(args.epoch_size):
+                    print ('\n')
                     print ("Iteration {epoch_idx} in epoch {epoch} finish putting data ...".format(\
                         epoch_idx = epoch_idx, epoch = epoch))
                     self.thread.copy(images, seeds)
@@ -683,6 +703,27 @@ class NeuralEnhancer(object):
                     print("loss: {}, average: {}".format(l, average))
                     self.save_log_history(l)
                     #print('↑' if l > average else '↓', end='', flush=True)
+
+                    disc_ouput = stats/float(epoch_idx + 1)
+                    real, fake = disc_ouput[:args.batch_size], disc_ouput[args.batch_size:]
+                    print('  - discriminator', real.mean(), len(np.where(real > 0.5)[0]),
+                                               fake.mean(), len(np.where(fake < -0.5)[0]))
+                    # adpative learning rate, after adversarial loss and discriminator loss has started
+                    if (epoch >= args.generator_start and epoch >= args.adversarial_start and epoch >= args.discriminator_start
+                        and self.model.adversary_weight.get_value() > 0):
+                        # cur_gen_lr = self.model.gen_lr.get_value()
+                        # cur_disc_lr = self.model.disc_lr.get_value()
+
+                        print ("generator learning rate before adaptation: ", self.model.gen_lr.get_value())
+                        print ("discriminator learning rate before adaptation", self.model.disc_lr.get_value())                        
+
+                        # if discriminator too strong, increase generator lr
+                        self.model.gen_lr.set_value(l_r_generator * sigmoid(real.mean(), 0 , 5))
+                        # if generator too strong, increase discriminator lr
+                        self.model.disc_lr.set_value(l_r_discriminator * sigmoid(fake.mean(), 0 , 5))
+
+                    print ("generator learning rate: ", self.model.gen_lr.get_value())
+                    print ("discriminator learning rate", self.model.disc_lr.get_value())
                     
 
                 scald, repro = self.model.predict(seeds)
@@ -691,7 +732,7 @@ class NeuralEnhancer(object):
                 stats /= args.epoch_size
                 totals, labels = [sum(total)] + list(total), ['total', 'prcpt', 'smthn', 'advrs']
                 gen_info = ['{}{}{}={:4.2e}'.format(ansi.WHITE_B, k, ansi.ENDC, v) for k, v in zip(labels, totals)]
-                print('\rEpoch #{} at {:4.1f}s, lr={:4.2e}{}'.format(epoch+1, time.time()-start, l_r, ' '*(args.epoch_size-30)))
+                print('\rEpoch #{} at {:4.1f}s, l_r_generator={:4.2e}{}'.format(epoch+1, time.time()-start, l_r_generator, ' '*(args.epoch_size-30)))
                 print('  - generator {}'.format(' '.join(gen_info)))
 
                 real, fake = stats[:args.batch_size], stats[args.batch_size:]
@@ -701,6 +742,7 @@ class NeuralEnhancer(object):
                     print('  - generator now optimizing against discriminator.')
                     self.model.adversary_weight.set_value(args.adversary_weight)
                     running = None
+
                 if (epoch+1) % args.save_every == 0:
                     print('  - saving current generator layers to disk...')
                     self.model.save_generator()
