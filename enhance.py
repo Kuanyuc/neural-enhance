@@ -61,9 +61,8 @@ add_arg('--batch-shape',        default=192, type=int,              help='Resolu
 add_arg('--batch-size',         default=15, type=int,               help='Number of images per training batch.')
 add_arg('--buffer-size',        default=1350, type=int,             help='Total image fragments kept in cache.')
 add_arg('--buffer-fraction',    default=5, type=int,                help='Fragments cached for each image loaded.')
-add_arg('--learning-rate-generator',          default=1E-3, type=float,           help='Parameter for the ADAM optimizer, generator.')
+add_arg('--learning-rate-generator',          default=1E-4, type=float,           help='Parameter for the ADAM optimizer, generator.')
 add_arg('--learning-rate-discriminator',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer, discriminator.')
-add_arg('--learning-rate',      default=1E-4, type=float,           help='Parameter for the ADAM optimizer.')
 add_arg('--learning-period',    default=300, type=int,               help='How often to decay the learning rate.')
 add_arg('--learning-decay',     default=0.5, type=float,            help='How much to decay the learning rate.')
 add_arg('--generator-upscale',  default=2, type=int,                help='Steps of 2x up-sampling as post-process.')
@@ -582,7 +581,7 @@ self.get_filename()))
 
         # Combined Theano function for updating both generator and discriminator at the same time.
         updates = collections.OrderedDict(list(gen_updates.items()) + list(disc_updates.items()))
-        self.fit = theano.function([input_tensor, seed_tensor], gen_losses + [disc_out.mean(axis=(1,2,3))] + [disc_out],
+        self.fit = theano.function([input_tensor, seed_tensor], gen_losses + [disc_out.mean(axis=(1,2,3))] + [disc_out] + disc_losses,
 updates=updates)
 
 
@@ -634,9 +633,13 @@ class NeuralEnhancer(object):
             t_cur += 1
             if t_cur % args.learning_period == 0: l_r *= args.learning_decay
 
-    def save_log_history(self, this_loss):
+    def save_log_history(self, gen_loss, disc_loss):
+        """
+        gen_loss: the generator loss consist of smooth, percept, adversarial
+        disc_loss: the discriminator loss
+        """
         with open(self.loss_save_file, 'a') as f:
-            f.write(str(this_loss) + '\n')
+            f.write(" ".join([str(i) for i in gen_loss] + [str(disc_loss)]) + '\n')
 
     def train(self):
         seed_size = args.batch_shape // args.zoom
@@ -700,8 +703,10 @@ class NeuralEnhancer(object):
                     l = np.sum(losses)
                     assert not np.isnan(losses).any()
                     average = l if average is None else average * 0.95 + 0.05 * l
-                    print("loss: {}, average: {}".format(l, average))
-                    self.save_log_history(l)
+                    print("generator loss: {}, average: {}".format(l, average))
+                    disc_loss = output[5] # batch loss
+                    print ("discriminator loss: ", disc_loss)
+                    self.save_log_history(losses, disc_loss)
                     #print('↑' if l > average else '↓', end='', flush=True)
 
                     disc_ouput = stats/float(epoch_idx + 1)
