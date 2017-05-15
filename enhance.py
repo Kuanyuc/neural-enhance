@@ -159,7 +159,7 @@ class DataLoader(threading.Thread):
         self.orig_shape, self.seed_shape = args.batch_shape, args.batch_shape // args.zoom
 
         self.orig_buffer = np.zeros((args.buffer_size, 3, self.orig_shape, self.orig_shape), dtype=np.float32)
-        self.seed_buffer = np.zeros((args.buffer_size, self.image_num, 3, self.seed_shape, self.seed_shape), dtype=np.float32)
+        self.seed_buffer = np.zeros((args.buffer_size, 3, self.image_num, self.seed_shape, self.seed_shape), dtype=np.float32) # (B, C, T, W, H)
         self.files = glob.glob(args.train)
         print ("Number of files {}".format(len(self.files)))
         if len(self.files) == 0:
@@ -305,7 +305,7 @@ class DataLoader(threading.Thread):
         # orig is one frame
         self.orig_buffer[idx] = np.transpose(orig_chunk.astype(np.float32) / 255.0 - 0.5, (2, 0, 1)) # reshape to (C, W, H)
         # seed is image_num of frames
-        self.seed_buffer[idx] = np.transpose(seed_chunk_arr.astype(np.float32) / 255.0 - 0.5, (0, 3, 1, 2)) # reshape to (T, C, W, H)
+        self.seed_buffer[idx] = np.transpose(seed_chunk_arr.astype(np.float32) / 255.0 - 0.5, (3, 0, 1, 2)) # reshape to (C, T, W, H), to accomodate (B, C, T, W, H) in Conv3DLayer later
         if DEBUG_LOG_DATA_PREPARATION:
             print ("self.seed_buffer[{idx}].shape: {shape}".format(idx = idx, shape = self.seed_buffer[idx].shape))
         if DEBUG_LOG_DATA_PREPARATION:
