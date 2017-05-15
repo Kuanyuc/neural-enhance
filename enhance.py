@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 
 DEBUG_VISUALISE_INPUT = False
 DEBUG_LOG_DATA_PREPARATION = False
+USE_ADAPTIVE_LEARNING_RATE = False
 
 # Configure all options first so we can later custom-load other libraries (Theano) based on device specified by user.
 parser = argparse.ArgumentParser(description='Generate a new image by applying style onto a content image.',
@@ -713,19 +714,21 @@ class NeuralEnhancer(object):
                     real, fake = disc_ouput[:args.batch_size], disc_ouput[args.batch_size:]
                     print('  - discriminator', real.mean(), len(np.where(real > 0.5)[0]),
                                                fake.mean(), len(np.where(fake < -0.5)[0]))
-                    # adpative learning rate, after adversarial loss and discriminator loss has started
-                    if (epoch >= args.generator_start and epoch >= args.adversarial_start and epoch >= args.discriminator_start
-                        and self.model.adversary_weight.get_value() > 0):
-                        # cur_gen_lr = self.model.gen_lr.get_value()
-                        # cur_disc_lr = self.model.disc_lr.get_value()
 
-                        print ("generator learning rate before adaptation: ", self.model.gen_lr.get_value())
-                        print ("discriminator learning rate before adaptation", self.model.disc_lr.get_value())                        
+                    if USE_ADAPTIVE_LEARNING_RATE:
+                        # adpative learning rate, after adversarial loss and discriminator loss has started
+                        if (epoch >= args.generator_start and epoch >= args.adversarial_start and epoch >= args.discriminator_start
+                            and self.model.adversary_weight.get_value() > 0):
+                            # cur_gen_lr = self.model.gen_lr.get_value()
+                            # cur_disc_lr = self.model.disc_lr.get_value()
 
-                        # if discriminator too strong, increase generator lr
-                        self.model.gen_lr.set_value(l_r_generator * sigmoid(real.mean(), 0 , 5))
-                        # if generator too strong, increase discriminator lr
-                        self.model.disc_lr.set_value(l_r_discriminator * sigmoid(fake.mean(), 0 , 5))
+                            print ("generator learning rate before adaptation: ", self.model.gen_lr.get_value())
+                            print ("discriminator learning rate before adaptation", self.model.disc_lr.get_value())                        
+
+                            # if discriminator too strong, increase generator lr
+                            self.model.gen_lr.set_value(l_r_generator * sigmoid(real.mean(), 0 , 5))
+                            # if generator too strong, increase discriminator lr
+                            self.model.disc_lr.set_value(l_r_discriminator * sigmoid(fake.mean(), 0 , 5))
 
                     print ("generator learning rate: ", self.model.gen_lr.get_value())
                     print ("discriminator learning rate", self.model.disc_lr.get_value())
